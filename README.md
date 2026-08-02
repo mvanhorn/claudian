@@ -94,6 +94,20 @@ npm run build
 
 The following sections use Claude Code as an example.
 
+### Claude user hooks stall a session
+
+Claudian loads Claude Code's user-level `~/.claude/settings.json` by default. This includes user hooks registered by companion tools. A hook that expects an interactive terminal can block or fail in Claudian's embedded SDK session, which may leave the UI looking stuck or prevent the session from ending. This was reported with a Clawd on Desk `SessionEnd` hook, but the same issue can affect any interactive user hook; Claudian cannot diagnose every hook process automatically.
+
+As a workaround, open Claudian settings, select the **Claude** tab, and turn off **Load user Claude settings** under **Safety**. This excludes all user-level Claude settings from Claudian, including hooks and permission rules; project and local settings continue to load. Claudian cannot disable one user hook while loading the rest of the user settings file.
+
+Hook authors can avoid interactive-session work in embedded SDK sessions by checking `CLAUDE_CODE_ENTRYPOINT`. When its value is `sdk-ts`, the hook should exit successfully before starting terminal-dependent work:
+
+```js
+if (process.env.CLAUDE_CODE_ENTRYPOINT === 'sdk-ts') {
+  process.exit(0);
+}
+```
+
 ### Provider CLI not found
 
 If Claudian cannot auto-detect a provider CLI, verify that the CLI is installed and available to GUI applications through PATH. Typical errors include `spawn claude ENOENT` and `Claude CLI not found`. This issue is common with Node version managers (nvm, fnm, volta).
