@@ -118,6 +118,7 @@ export class CodexNotificationRouter {
   private streamedAssistantTurnText = '';
   private currentAssistantSegmentId: string | undefined;
   private currentAssistantSegmentText = '';
+  private pendingAssistantFallbackText = '';
   private seenRawCallIds = new Set<string>();
   private pendingRawOutputItemsByCallId = new Map<string, Record<string, unknown>>();
   private rawStartedCallIds = new Set<string>();
@@ -166,6 +167,7 @@ export class CodexNotificationRouter {
   private resetAssistantSegmentText(): void {
     this.currentAssistantSegmentId = undefined;
     this.currentAssistantSegmentText = '';
+    this.pendingAssistantFallbackText = '';
   }
 
   private beginAssistantSegment(itemId: string): void {
@@ -201,6 +203,12 @@ export class CodexNotificationRouter {
 
     this.currentAssistantSegmentText += text;
     this.streamedAssistantTurnText += text;
+  }
+
+  private takeAssistantFallbackText(text: string): string {
+    const fallbackText = this.pendingAssistantFallbackText;
+    this.pendingAssistantFallbackText = '';
+    return assistantRepresentationsOverlap(text, fallbackText) ? fallbackText : '';
   }
 
   beginTurn(params: { isPlanTurn: boolean }): void {
@@ -952,9 +960,10 @@ export class CodexNotificationRouter {
   private emitMissingAssistantSegmentText(text: string, itemId?: string): void {
     this.claimAssistantSegment(itemId);
     const segmentId = itemId ?? this.currentAssistantSegmentId;
+    const fallbackText = this.takeAssistantFallbackText(text);
     const missingText = normalizeAgentMessageCompletionText(
       text,
-      this.currentAssistantSegmentText,
+      fallbackText || this.currentAssistantSegmentText,
     );
     if (text) {
       this.currentAssistantSegmentText = text;
@@ -972,7 +981,11 @@ export class CodexNotificationRouter {
 
   private emitMissingAgentMessageText(text: string, itemId: string): void {
     const streamedText = this.streamedAgentMessageTextById.get(itemId) ?? '';
-    const missingText = normalizeAgentMessageCompletionText(text, streamedText);
+    const fallbackText = this.takeAssistantFallbackText(text);
+    const missingText = normalizeAgentMessageCompletionText(
+      text,
+      fallbackText || streamedText,
+    );
     if (text) {
       this.streamedAgentMessageTextById.set(itemId, text);
     }
@@ -987,10 +1000,17 @@ export class CodexNotificationRouter {
   }
 
   private emitMissingAssistantTurnText(text: string): void {
+    const segmentText = assistantRepresentationsOverlap(
+      text,
+      this.currentAssistantSegmentText,
+    )
+      ? this.currentAssistantSegmentText
+      : this.streamedAssistantTurnText;
     const missingText = normalizeAgentMessageCompletionText(
       text,
-      this.streamedAssistantTurnText,
+      segmentText,
     );
+    this.pendingAssistantFallbackText = text;
     if (!missingText) {
       return;
     }
@@ -2572,5 +2592,13 @@ function normalizeAgentMessageCompletionText(
   if (text.startsWith(streamedAssistantText)) {
     return text.slice(streamedAssistantText.length);
   }
+  if (streamedAssistantText.startsWith(text)) {
+    return '';
+  }
   return text;
+}
+
+function assistantRepresentationsOverlap(text: string, otherText: string): boolean {
+  return Boolean(text && otherText)
+    && (text.startsWith(otherText) || otherText.startsWith(text));
 }

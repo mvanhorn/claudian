@@ -383,6 +383,332 @@ describe('CodexNotificationRouter', () => {
       ]);
     });
 
+    it('deduplicates a fallback answer across a canonical assistant boundary', () => {
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'agentMessage',
+          id: 'fallback-segment',
+          text: '',
+          phase: 'streaming',
+          memoryCitation: null,
+        },
+      });
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Final answer',
+      });
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'agentMessage',
+          id: 'canonical-segment',
+          text: '',
+          phase: 'streaming',
+          memoryCitation: null,
+        },
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Final answer' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Final answer' },
+      ]);
+    });
+
+    it('deduplicates a later fallback against the current post-tool assistant segment', () => {
+      router.handleNotification('item/agentMessage/delta', {
+        threadId: 't1',
+        turnId: 'turn1',
+        itemId: 'msg1',
+        delta: 'Before tool',
+      });
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'commandExecution',
+          id: 'call_abc',
+          command: 'echo tool',
+          cwd: '/workspace',
+          processId: '123',
+          source: 'unifiedExecStartup',
+          status: 'inProgress',
+          commandActions: [{ type: 'unknown', command: 'echo tool' }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Final answer' }],
+        },
+      });
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Final answer',
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Before tool' },
+        { type: 'text', content: 'Final answer' },
+      ]);
+    });
+
+    it('preserves an identical fallback segment after a tool and deduplicates its raw completion', () => {
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Same answer',
+      });
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'commandExecution',
+          id: 'call_abc',
+          command: 'echo tool',
+          cwd: '/workspace',
+          processId: '123',
+          source: 'unifiedExecStartup',
+          status: 'inProgress',
+          commandActions: [{ type: 'unknown', command: 'echo tool' }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      });
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Same answer',
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Same answer' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Same answer' },
+        { type: 'text', content: 'Same answer' },
+      ]);
+    });
+
+    it('retains a longer fallback baseline when a canonical projection is shorter', () => {
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Final answer',
+      });
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'agentMessage',
+          id: 'canonical-segment',
+          text: '',
+          phase: 'streaming',
+          memoryCitation: null,
+        },
+      });
+      router.handleNotification('item/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'agentMessage',
+          id: 'canonical-segment',
+          text: 'Final',
+          phase: 'final',
+          memoryCitation: null,
+        },
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Final answer' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Final answer' },
+      ]);
+    });
+
+    it('does not shorten the segment baseline for a shorter raw completion', () => {
+      router.handleNotification('item/agentMessage/delta', {
+        threadId: 't1',
+        turnId: 'turn1',
+        itemId: 'msg1',
+        delta: 'Hello',
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Hell' }],
+        },
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Hello' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Hello' },
+      ]);
+    });
+
+    it('emits only a missing fallback suffix across a canonical assistant boundary', () => {
+      router.handleNotification('item/agentMessage/delta', {
+        threadId: 't1',
+        turnId: 'turn1',
+        itemId: 'fallback-segment',
+        delta: 'Hel',
+      });
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Hello',
+      });
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'agentMessage',
+          id: 'canonical-segment',
+          text: '',
+          phase: 'streaming',
+          memoryCitation: null,
+        },
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Hello world' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Hel' },
+        { type: 'text', content: 'lo' },
+        { type: 'text', content: ' world' },
+      ]);
+    });
+
+    it('preserves identical assistant messages separated by a tool', () => {
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Same answer',
+      });
+      router.handleNotification('item/started', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'commandExecution',
+          id: 'call_abc',
+          command: 'echo tool',
+          cwd: '/workspace',
+          processId: '123',
+          source: 'unifiedExecStartup',
+          status: 'inProgress',
+          commandActions: [{ type: 'unknown', command: 'echo tool' }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn1',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Same answer' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Same answer' },
+        { type: 'text', content: 'Same answer' },
+      ]);
+    });
+
+    it('allows the same answer after beginTurn resets assistant tracking', () => {
+      router.beginTurn({ isPlanTurn: false });
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Same answer',
+      });
+
+      chunks = [];
+      router.beginTurn({ isPlanTurn: false });
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn2',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Same answer' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Same answer' },
+      ]);
+    });
+
+    it('allows the same answer after endTurn resets assistant tracking', () => {
+      router.beginTurn({ isPlanTurn: false });
+      router.handleNotification('event_msg', {
+        type: 'agent_message',
+        message: 'Same answer',
+      });
+
+      chunks = [];
+      router.endTurn();
+      router.handleNotification('rawResponseItem/completed', {
+        threadId: 't1',
+        turnId: 'turn2',
+        item: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Same answer' }],
+        },
+      });
+
+      expect(chunks.filter(chunk => chunk.type === 'text')).toEqual([
+        { type: 'text', content: 'Same answer' },
+      ]);
+    });
+
     it('does not render raw user bootstrap messages as assistant text', () => {
       router.handleNotification('rawResponseItem/completed', {
         threadId: 't1',
