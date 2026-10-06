@@ -1,7 +1,9 @@
 import { ProviderModelUnavailableError } from '@/core/providers/models/ProviderModelUnavailableError';
 import {
+  appendInheritedClaudeAuthHint,
   classifyClaudeError,
   getClaudeInvalidationReason,
+  inheritedClaudeAuthOverrides,
 } from '@/providers/claude/execution/classifyClaudeError';
 
 function errnoError(code: string, message: string): NodeJS.ErrnoException {
@@ -53,5 +55,62 @@ describe('classifyClaudeError', () => {
     ['provider', 'provider-error'],
   ] as const)('maps %s to the %s invalidation', (category, reason) => {
     expect(getClaudeInvalidationReason(category)).toBe(reason);
+  });
+});
+
+describe('inherited Claude auth hints', () => {
+  const authenticationMessage = 'Error: authentication_failed';
+  const inheritedKey = { ANTHROPIC_API_KEY: 'stale' };
+
+  it('names an inherited API key on authentication_failed', () => {
+    const hinted = appendInheritedClaudeAuthHint(
+      authenticationMessage,
+      inheritedClaudeAuthOverrides(inheritedKey, ''),
+    );
+    expect(hinted).toContain('ANTHROPIC_API_KEY');
+    expect(hinted).toContain('ANTHROPIC_API_KEY=');
+    expect(hinted).not.toContain('stale');
+  });
+
+  it.each([
+    'ANTHROPIC_API_KEY=configured-key',
+    'ANTHROPIC_API_KEY=',
+  ])('leaves the authentication message unchanged for configured %s', (configured) => {
+    expect(appendInheritedClaudeAuthHint(
+      authenticationMessage,
+      inheritedClaudeAuthOverrides(inheritedKey, configured),
+    )).toBe(authenticationMessage);
+  });
+
+  it('names an inherited base URL and oauth token in constant order', () => {
+    const hinted = appendInheritedClaudeAuthHint(
+      authenticationMessage,
+      inheritedClaudeAuthOverrides({
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token',
+        ANTHROPIC_BASE_URL: 'https://gateway.example',
+      }, ''),
+    );
+    const baseUrl = hinted.indexOf('ANTHROPIC_BASE_URL');
+    const oauthToken = hinted.indexOf('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(baseUrl).toBeGreaterThan(authenticationMessage.length);
+    expect(oauthToken).toBeGreaterThan(baseUrl);
+    expect(hinted).not.toContain('oauth-token');
+    expect(hinted).not.toContain('gateway.example');
+  });
+
+  it('treats a lowercase launch key as the canonical name and ignores empty or missing values', () => {
+    expect(inheritedClaudeAuthOverrides({ anthropic_api_key: 'stale' }, '')).toEqual([
+      'ANTHROPIC_API_KEY',
+    ]);
+    expect(inheritedClaudeAuthOverrides({ ANTHROPIC_API_KEY: '' }, '')).toEqual([]);
+    expect(inheritedClaudeAuthOverrides({}, '')).toEqual([]);
+  });
+
+  it('returns a rate-limit message unchanged when inherited keys are present', () => {
+    const message = 'rate limit exceeded';
+    expect(appendInheritedClaudeAuthHint(
+      message,
+      inheritedClaudeAuthOverrides(inheritedKey, ''),
+    )).toBe(message);
   });
 });

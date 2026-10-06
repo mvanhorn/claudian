@@ -146,4 +146,24 @@ describe('buildClaudeLaunchOptions', () => {
     expect(options.env).not.toHaveProperty('MCP_TIMEOUT');
     expect(typeof options.spawnClaudeCodeProcess).toBe('function');
   });
+
+  it('lets configured text replace an inherited API key, including an empty assignment', () => {
+    const previous = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'inherited';
+    try {
+      expect(buildClaudeLaunchOptions(
+        host({}, 'ANTHROPIC_API_KEY='),
+        '/work',
+        '/bin/claude',
+      ).env.ANTHROPIC_API_KEY).toBe('');
+      expect(buildClaudeLaunchOptions(
+        host({}, 'ANTHROPIC_API_KEY=configured'),
+        '/work',
+        '/bin/claude',
+      ).env.ANTHROPIC_API_KEY).toBe('configured');
+    } finally {
+      if (previous === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previous;
+    }
+  });
 });

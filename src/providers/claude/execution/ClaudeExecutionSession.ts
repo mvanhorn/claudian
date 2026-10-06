@@ -37,7 +37,12 @@ import { executeClaudeRewind } from '../runtime/ClaudeRewindService';
 import { buildClaudeSDKUserMessage } from '../runtime/ClaudeUserMessageFactory';
 import { type ClaudeRuntimeCatalog, toClaudeRuntimeCatalog } from '../runtime/probeClaudeModels';
 import { getClaudeProviderSettings } from '../settings';
-import { classifyClaudeError, getClaudeInvalidationReason } from './classifyClaudeError';
+import {
+  appendInheritedClaudeAuthHint,
+  classifyClaudeError,
+  getClaudeInvalidationReason,
+  inheritedClaudeAuthOverrides,
+} from './classifyClaudeError';
 import { ClaudeExecutionEventNormalizer } from './ClaudeExecutionEventNormalizer';
 import {
   type ClaudeEncodedExecutionRequest,
@@ -575,10 +580,17 @@ ClaudeExecutionStrategySink {
       }
       if (normalized.type === 'native_error') {
         this.#finishBackgroundTurn('provider-ended');
+        const message = appendInheritedClaudeAuthHint(
+          normalized.message,
+          inheritedClaudeAuthOverrides(
+            this.lastEncodedRequest?.options.env,
+            this.host.getActiveEnvironmentVariables('claude'),
+          ),
+        );
         if (this.activeRun && inputMatch !== false) {
           this.#finishError(
             this.activeRun,
-            new Error(normalized.message),
+            new Error(message),
             normalized.code === 'provider_session_missing'
               ? normalized.providerSessionId
               : undefined,
@@ -589,7 +601,7 @@ ClaudeExecutionStrategySink {
             category: normalized.code === 'provider_session_missing'
               ? 'provider-session-missing'
               : 'provider',
-            message: normalized.message,
+            message,
             recoverable: true,
           });
           this.#finishBackgroundTurn('provider-ended');

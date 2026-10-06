@@ -132,6 +132,12 @@ Either:
 1. Install the native binary (recommended).
 2. Add the Node.js path in Settings → Environment: `PATH=/path/to/node/bin`.
 
+### Inherited environment variables override Claude subscription login
+
+Obsidian starts Claude Code with the operating-system environment. A non-empty `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, or `CLAUDE_CODE_OAUTH_TOKEN` selects that credential instead of a Claude.ai subscription login.
+
+To keep the subscription login, set each of those variables to empty under Settings → Providers → Claude → Custom variables, for example `ANTHROPIC_API_KEY=`. The operating-system variable can stay set for other tools.
+
 ### More help
 
 For provider-specific installation and configuration guidance, refer to the provider documentation linked in the [Requirements](#requirements) section. If you have a feature request or run into a bug, please [submit a GitHub issue](https://github.com/YishenTu/claudian/issues).
