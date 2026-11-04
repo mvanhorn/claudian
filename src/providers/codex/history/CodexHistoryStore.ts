@@ -1301,8 +1301,17 @@ function flushBubbleTurnMessages(
   let lastAssistantTimestamp = 0;
   const assistantMessages: ChatMessage[] = [];
 
+  // A completed, userless compaction turn can emit a synthetic answer. Decide
+  // from the whole turn so prompted answers and substantive output stay intact.
+  const isCompactionOnly = turn.completed && !rawUserText.trim() && !userImages
+    && turn.assistantBubbles.some(bubble => bubble.contentBlocks.some(block => block.type === 'context_compacted'))
+    && turn.assistantBubbles.every(bubble => !bubble.interrupted && bubble.toolCalls.length === 0
+      && bubble.thinkingChunks.length === 0
+      && bubble.contentBlocks.every(block => block.type === 'context_compacted'
+        || (block.type === 'text' && block.content.trim() === 'Compacted')));
+
   for (const bubble of turn.assistantBubbles) {
-    const contentText = bubble.contentChunks.join('\n\n');
+    const contentText = isCompactionOnly ? '' : bubble.contentChunks.join('\n\n');
     const thinkingText = bubble.thinkingChunks.join('\n\n');
     const hasContent = contentText.trim().length > 0;
     const hasThinking = thinkingText.trim().length > 0;
@@ -1324,7 +1333,8 @@ function flushBubbleTurnMessages(
       continue;
     }
 
-    const contentBlocks = bubble.contentBlocks;
+    const contentBlocks = isCompactionOnly
+      ? bubble.contentBlocks.filter(block => block.type === 'context_compacted') : bubble.contentBlocks;
 
     const msg: ChatMessage = {
       id: `codex-msg-${msgIndex}`,

@@ -8,6 +8,7 @@ import { createChatFeatureHost } from '@test/helpers/features/chat/ChatFeatureHo
 import { conversationRecord } from '@test/helpers/features/chat/ConversationFixture';
 import { createProjectsFake } from '@test/helpers/features/chat/ProjectsFake';
 import { createSessionRuntimePool } from '@test/helpers/features/chat/SessionRuntimePoolHarness';
+import { parseCodexSessionContent } from '@test/helpers/providers/codex/parseCodexSessionContent';
 import { testDate } from '@test/helpers/testClock';
 import { fireEvent, waitFor, within } from '@testing-library/dom';
 import { Component, MarkdownRenderer } from 'obsidian';
@@ -74,9 +75,9 @@ beforeEach(async () => {
 
 it.each([false, true])('collapses completed history above the answer and puts copy, fork, time below it (compaction: %s)', async compaction => {
   const { renderer, messagesEl, fork } = setup();
-  const historyMessages: ChatMessage[] = [...messages];
+  const historyMessages: ChatMessage[] = messages.map(message => ({ ...message, turnId: 'same-turn' }));
   if (compaction) historyMessages.splice(2, 0, {
-    id: 'compact', role: 'assistant', content: '', timestamp: testDate().getTime(),
+    id: 'compact', role: 'assistant', content: '', timestamp: testDate().getTime(), turnId: 'same-turn',
     contentBlocks: [{ type: 'context_compacted' }],
   });
   renderer.renderMessages(historyMessages, () => 'Hello');
@@ -120,6 +121,45 @@ it.each([false, true])('collapses completed history above the answer and puts co
     .toBe(user.querySelector('.claudian-message-timestamp'));
   expect((await axe(answer)).violations).toEqual([]);
   renderer.dispose();
+});
+
+it.each(['compaction', 'known-turn', 'legacy'] as const)('preserves a completed Codex answer before a userless %s turn', async kind => {
+  const { renderer, messagesEl } = setup('codex');
+  const records = [
+    { type: 'event_msg', payload: { type: 'task_started', turn_id: 'answer' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'Fix this' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: 'Fixed the bug.' } },
+    { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'answer' } },
+    { type: 'event_msg', payload: { type: 'task_started', turn_id: 'compact' } },
+    { type: 'event_msg', payload: { type: 'context_compacted' } },
+    { type: 'event_msg', payload: { type: 'agent_message', message: kind === 'compaction' ? 'Compacted' : 'Later answer' } },
+    { type: 'event_msg', payload: { type: 'task_complete', turn_id: 'compact' } },
+  ];
+  const history = parseCodexSessionContent(records.map(record => JSON.stringify({
+    ...record, ...(kind === 'known-turn' ? {} : { timestamp: testDate().toISOString() }),
+  })).join('\n'));
+  const firstAnswer = history.find(message => message.content === 'Fixed the bug.')!;
+  expect(firstAnswer.durationSeconds).toBeUndefined();
+  if (kind === 'known-turn') delete firstAnswer.completedAt;
+  if (kind === 'legacy') for (const message of history) delete message.turnId;
+  try {
+    renderer.renderMessages(history, () => 'Hello');
+    await Promise.resolve();
+    expect(within(messagesEl).getByText('Fixed the bug.').closest('[hidden]')).toBeNull();
+    expect(within(messagesEl).queryByText('Compacted')).toBeNull();
+    expect(within(messagesEl).getAllByRole('button', { name: 'Copy message' })).toHaveLength(kind === 'compaction' ? 2 : 3);
+    expect(within(messagesEl).getByText('Conversation compacted')).toBeDefined();
+    const work = within(messagesEl).queryAllByRole('button', { name: 'Worked' })
+      .map(header => document.getElementById(header.getAttribute('aria-controls')!)!);
+    expect(work.map(body => body.textContent?.includes('Conversation compacted')))
+      .toEqual(kind === 'compaction' ? [] : [true]);
+    expect(work.some(body => body.textContent?.includes('Fixed the bug.'))).toBe(false);
+    expect(within(messagesEl).queryByText('Later answer')?.closest('[hidden]'))
+      .toBe(kind === 'compaction' ? undefined : null);
+    expect(await axe(messagesEl)).toHaveNoViolations();
+  } finally {
+    renderer.dispose();
+  }
 });
 
 it('keeps live and finalized thinking accessible without hover tooltip attributes', async () => {

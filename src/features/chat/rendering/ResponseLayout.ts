@@ -157,6 +157,9 @@ export function getResponseLayout(message: ChatMessage, messages: ChatMessage[],
   let start = end;
   while (start > 0 && messages[start - 1].role === 'assistant'
     && messages[start - 1].durationSeconds === undefined
+    && messages[start - 1].completedAt === undefined
+    && !(message.turnId !== undefined && messages[start - 1].turnId !== undefined
+      && messages[start - 1].turnId !== message.turnId)
     && !messages[start - 1].isInterrupt
     && !messages[start - 1].contentBlocks?.some(block => block.type === 'task_notification')) start--;
   const hasContinuation = segments.length > 1;

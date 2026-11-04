@@ -2874,6 +2874,49 @@ describe('CodexHistoryStore', () => {
   });
 
   describe('parseCodexSessionContent - context_compacted boundary', () => {
+    it.each([
+      { representation: 'event', prompt: false, extra: '', end: 'task_complete', hidden: true },
+      { representation: 'item', prompt: false, extra: '', end: 'task_complete', hidden: true },
+      { representation: 'both', prompt: false, extra: '', end: 'task_complete', hidden: true },
+      { representation: 'event', prompt: true, extra: '', end: 'task_complete', hidden: false },
+      { representation: 'event', prompt: false, extra: 'Real answer', end: 'task_complete', hidden: false },
+      { representation: 'event', prompt: false, extra: '', end: 'turn_aborted', hidden: false },
+      { representation: 'event', prompt: false, extra: '', end: '', hidden: false },
+    ])('normalizes only completed compaction-only placeholders: %j', ({ representation, prompt, extra, end, hidden }) => {
+      const records = [
+        { type: 'event_msg', payload: { type: 'task_started', turn_id: 'compact' } },
+        ...(prompt ? [{ type: 'event_msg', payload: { type: 'user_message', message: 'Say Compacted' } }] : []),
+        { type: 'compacted', payload: { message: 'Hidden summary', replacement_history: [
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Hidden replacement' }] },
+        ] } },
+        { type: 'event_msg', payload: { type: 'context_compacted' } },
+        ...(representation !== 'item' ? [{ type: 'event_msg', payload: { type: 'agent_message', message: 'Compacted' } }] : []),
+        ...(representation !== 'event' ? [{ type: 'response_item', payload: {
+          type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Compacted' }],
+        } }] : []),
+        ...(extra ? [{ type: 'event_msg', payload: { type: 'agent_message', message: extra } }] : []),
+        ...(end ? [{ type: 'event_msg', payload: { type: end, turn_id: 'compact' } }] : []),
+      ];
+      const turns = parseCodexSessionTurns(records.map(record => JSON.stringify({
+        ...record, timestamp: testDate().toISOString(),
+      })).join('\n'));
+      expect(turns).toHaveLength(1);
+      expect(turns[0].turnId).toBe('compact');
+      const assistants = turns[0].messages.filter(message => message.role === 'assistant');
+      expect(assistants.flatMap(message => message.contentBlocks ?? []).filter(block => block.type === 'context_compacted')).toHaveLength(1);
+      expect(assistants.map(message => message.content).join('\n')).not.toMatch(/Hidden/);
+      const expectedText = ['Compacted', extra].filter(Boolean).join('\n\n');
+      expect(assistants.map(message => ({ content: message.content, blocks: message.contentBlocks }))).toEqual([
+        { content: '', blocks: [{ type: 'context_compacted' }] },
+        ...(hidden ? [] : [{ content: expectedText, blocks: [{ type: 'text', content: expectedText }] }]),
+      ]);
+      expect(new Set(assistants.map(message => message.turnId))).toEqual(new Set([expect.any(String)]));
+      const last = assistants.at(-1)!;
+      expect({ completedAt: last.completedAt, assistantMessageId: last.assistantMessageId }).toEqual(end === 'task_complete'
+        ? { completedAt: testDate().getTime(), assistantMessageId: 'compact' }
+        : { completedAt: undefined, assistantMessageId: undefined });
+    });
+
     it.each([false, true])('restores record-only compaction and deduplicates its event (event: %s)', (withEvent) => {
       const records = [
         { type: 'event_msg', payload: { type: 'task_started', turn_id: 'compacted-turn' } },
